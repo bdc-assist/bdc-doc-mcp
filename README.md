@@ -1,6 +1,6 @@
 # BDC Doc RAG
 
-The documentation RAG MCP for of [bdc-assist](https://github.com/bdc-assist)
+The documentation RAG MCP of [bdc-assist](https://github.com/bdc-assist/bdc-assist)
 
 
 ```
@@ -94,9 +94,10 @@ uv run python -m bdc_doc_mcp.mcp_server           # stdio
 uv run python -m bdc_doc_mcp.mcp_server --http    # streamable HTTP, port MCP_PORT (default 8001)
 ```
 
-Self-contained — searches the Chroma DB directly with the same `.env`/config as the API,
-so the API service doesn't need to run. Tools: `search_docs`. Register with any MCP
-client, e.g.
+Exposes one tool, `search_docs` — same search as the API but queries Chroma directly,
+so the API service doesn't need to run. Needs an ingested `.chroma_db` + embeddings.
+
+Stdio clients (Claude Desktop/Code, Cursor) launch the server themselves — register it:
 
 ```json
 {"mcpServers": {"bdc-doc-mcp": {
@@ -105,7 +106,9 @@ client, e.g.
 }}}
 ```
 
-Self-check (needs an ingested `.chroma_db` + embeddings): `uv run python tests/test_mcp.py`
+Network clients: run `--http` and point them at `http://host:8001/mcp` instead.
+
+Smoke test: `uv run python tests/test_mcp.py`
 
 ## Preprocessing
 
