@@ -74,7 +74,7 @@ def test_embed_batched_reraises_after_exhausting_retries():
             assert False, "expected the persistent failure to propagate"
         except ConnectionError:
             pass
-        assert emb.calls == 5, "should give up after the default attempt budget"
+        assert emb.calls == 8, "should give up after the default attempt budget"
     finally:
         ingest.time.sleep = original_sleep
 

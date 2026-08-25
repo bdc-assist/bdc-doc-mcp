@@ -93,9 +93,10 @@ def _chunk_ids(contents, metas):
     return ids
 
 
-def _embed_with_retry(emb, batch, attempts=5):
-    """kubectl port-forward drops under normal conditions (VPN blips, idle timeouts);
-    retry with the same backoff _invoke_llm uses. Unlike _invoke_llm there's no
+def _embed_with_retry(emb, batch, attempts=8):
+    """kubectl port-forward drops under normal conditions (VPN blips, idle timeouts,
+    apiserver proxy restarts) and can stay down for a few minutes. Same backoff
+    _invoke_llm uses, extended to a ~4min budget. Unlike _invoke_llm there's no
     fallback for a missing embedding, so re-raise once attempts are exhausted."""
     for attempt in range(attempts):
         try:
@@ -107,20 +108,23 @@ def _embed_with_retry(emb, batch, attempts=5):
             time.sleep(2 ** attempt)
 
 
-def _embed_batched(emb, texts):
+def _embed_batched(emb, texts, desc="embedding"):
     """Embed in request-sized batches. Endpoints cap tokens per request (8k on some
     gateways); a whole file at once blows that. Budget is estimated at ~4 chars/token."""
     budget = int(os.getenv("EMBEDDING_BATCH_TOKENS", "6000")) * 4
     vectors, batch, batch_chars = [], [], 0
-    for text in texts:
-        text = text[:budget]  # a single oversized chunk still has to fit one request
-        if batch and batch_chars + len(text) > budget:
+    with tqdm(total=len(texts), desc=desc) as pbar:
+        for text in texts:
+            text = text[:budget]  # a single oversized chunk still has to fit one request
+            if batch and batch_chars + len(text) > budget:
+                vectors.extend(_embed_with_retry(emb, batch))
+                pbar.update(len(batch))
+                batch, batch_chars = [], 0
+            batch.append(text)
+            batch_chars += len(text)
+        if batch:
             vectors.extend(_embed_with_retry(emb, batch))
-            batch, batch_chars = [], 0
-        batch.append(text)
-        batch_chars += len(text)
-    if batch:
-        vectors.extend(_embed_with_retry(emb, batch))
+            pbar.update(len(batch))
     return vectors
 
 
@@ -146,7 +150,7 @@ def ingest_paths(paths, doc_type: str = "docs", use_summary: bool = False) -> in
             contents, metas, embed_texts = loader(f, doc_type)
         if not contents:
             continue
-        embeddings = _embed_batched(emb, embed_texts)
+        embeddings = _embed_batched(emb, embed_texts, desc=f"embedding {f.name}")
         ids = _chunk_ids(contents, metas)
         collection.upsert(ids=ids, documents=contents, embeddings=embeddings, metadatas=metas)
         total += len(contents)
