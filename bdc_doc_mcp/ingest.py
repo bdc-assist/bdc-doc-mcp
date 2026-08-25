@@ -93,11 +93,11 @@ def _chunk_ids(contents, metas):
     return ids
 
 
-def _embed_with_retry(emb, batch, attempts=8):
+def _embed_with_retry(emb, batch, attempts=5):
     """kubectl port-forward drops under normal conditions (VPN blips, idle timeouts,
-    apiserver proxy restarts) and can stay down for a few minutes. Same backoff
-    _invoke_llm uses, extended to a ~4min budget. Unlike _invoke_llm there's no
-    fallback for a missing embedding, so re-raise once attempts are exhausted."""
+    apiserver proxy restarts). Same backoff _invoke_llm uses. Unlike _invoke_llm
+    there's no fallback for a missing embedding, so re-raise once attempts are
+    exhausted."""
     for attempt in range(attempts):
         try:
             return emb.embed_documents(batch)
