@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # not installed: package sits at the repo root
 
+from bdc_doc_mcp import ingest
 from bdc_doc_mcp.ingest import _chunk_ids, _embed_batched
 
 
@@ -14,6 +15,20 @@ class FakeEmb:
 
     def embed_documents(self, texts):
         self.requests.append(list(texts))
+        return [[0.0] for _ in texts]
+
+
+class FlakyEmb:
+    """Fails the first `fail_times` calls, then behaves like FakeEmb."""
+
+    def __init__(self, fail_times):
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def embed_documents(self, texts):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise ConnectionError("tunnel dropped")
         return [[0.0] for _ in texts]
 
 
@@ -37,6 +52,33 @@ def test_oversized_single_text_is_truncated():
     assert len(emb.requests[0][0]) == 6000 * 4, "a lone huge chunk must still fit one request"
 
 
+def test_embed_batched_retries_transient_failure():
+    original_sleep = ingest.time.sleep
+    ingest.time.sleep = lambda seconds: None
+    try:
+        emb = FlakyEmb(fail_times=2)
+        vectors = _embed_batched(emb, ["a", "b", "c"])
+        assert len(vectors) == 3
+        assert emb.calls == 3, "should have retried twice before succeeding"
+    finally:
+        ingest.time.sleep = original_sleep
+
+
+def test_embed_batched_reraises_after_exhausting_retries():
+    original_sleep = ingest.time.sleep
+    ingest.time.sleep = lambda seconds: None
+    try:
+        emb = FlakyEmb(fail_times=999)
+        try:
+            _embed_batched(emb, ["a", "b", "c"])
+            assert False, "expected the persistent failure to propagate"
+        except ConnectionError:
+            pass
+        assert emb.calls == 5, "should give up after the default attempt budget"
+    finally:
+        ingest.time.sleep = original_sleep
+
+
 def test_ids_are_stable_and_unique():
     contents = ["same text", "same text", "other"]
     metas = [{"source": "a.pkl"}, {"source": "a.pkl"}, {"source": "a.pkl"}]
@@ -53,5 +95,7 @@ def test_ids_are_stable_and_unique():
 if __name__ == "__main__":
     test_batching_respects_token_budget()
     test_oversized_single_text_is_truncated()
+    test_embed_batched_retries_transient_failure()
+    test_embed_batched_reraises_after_exhausting_retries()
     test_ids_are_stable_and_unique()
     print("ingest self-check passed")

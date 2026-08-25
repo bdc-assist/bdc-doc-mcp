@@ -2,6 +2,7 @@ import argparse
 import os
 import pickle
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -92,6 +93,20 @@ def _chunk_ids(contents, metas):
     return ids
 
 
+def _embed_with_retry(emb, batch, attempts=5):
+    """kubectl port-forward drops under normal conditions (VPN blips, idle timeouts);
+    retry with the same backoff _invoke_llm uses. Unlike _invoke_llm there's no
+    fallback for a missing embedding, so re-raise once attempts are exhausted."""
+    for attempt in range(attempts):
+        try:
+            return emb.embed_documents(batch)
+        except Exception as e:
+            if attempt == attempts - 1:
+                raise
+            print(f"  embedding call failed ({type(e).__name__}); retrying in {2 ** attempt}s")
+            time.sleep(2 ** attempt)
+
+
 def _embed_batched(emb, texts):
     """Embed in request-sized batches. Endpoints cap tokens per request (8k on some
     gateways); a whole file at once blows that. Budget is estimated at ~4 chars/token."""
@@ -100,12 +115,12 @@ def _embed_batched(emb, texts):
     for text in texts:
         text = text[:budget]  # a single oversized chunk still has to fit one request
         if batch and batch_chars + len(text) > budget:
-            vectors.extend(emb.embed_documents(batch))
+            vectors.extend(_embed_with_retry(emb, batch))
             batch, batch_chars = [], 0
         batch.append(text)
         batch_chars += len(text)
     if batch:
-        vectors.extend(emb.embed_documents(batch))
+        vectors.extend(_embed_with_retry(emb, batch))
     return vectors
 
 
