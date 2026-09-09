@@ -2,7 +2,6 @@ import os
 import sys
 from functools import lru_cache
 
-import chromadb
 from dotenv import load_dotenv
 
 load_dotenv()  # real env vars win over .env, so shell overrides work as expected
@@ -33,6 +32,7 @@ def _provider(kind: str) -> str:
 
 @lru_cache
 def get_emb():
+    """Query-side embeddings — must be the same model bdc-doc-builder embeds documents with."""
     provider = _provider("EMBEDDING")
     url = os.getenv("EMBEDDING_URL")
     model = os.getenv("EMBEDDING_MODEL")
@@ -51,46 +51,3 @@ def get_emb():
         from langchain_ollama import OllamaEmbeddings
         return OllamaEmbeddings(base_url=url, model=model)
     raise ValueError(f"Unsupported EMBEDDING_MODEL_PROVIDER: {provider}")
-
-
-@lru_cache
-def get_llm():
-    provider = _provider("COMPLETION")
-    url = os.getenv("COMPLETION_URL")
-    model = os.getenv("COMPLETION_MODEL")
-    print(f"llm: provider={provider} model={model} url={url}", file=sys.stderr)
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model or "gpt-4o-mini", temperature=0)
-    if provider == "azure":
-        # COMPLETION_MODEL is the *deployment* name here, and COMPLETION_URL the resource root
-        # (no /openai/v1 suffix) — the client appends the deployment path itself
-        from langchain_openai import AzureChatOpenAI
-        return AzureChatOpenAI(
-            azure_endpoint=url, azure_deployment=model, temperature=0,
-            api_version=os.getenv("AZURE_API_VERSION", "2024-10-21"),
-            api_key=os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
-        )
-    if provider == "vllm":
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(base_url=url, model=model, temperature=0, api_key=_self_hosted_key())
-    if provider == "ollama":
-        from langchain_ollama import ChatOllama
-        return ChatOllama(base_url=url, model=model, temperature=0)
-    raise ValueError(f"Unsupported COMPLETION_MODEL_PROVIDER: {provider}")
-
-
-@lru_cache
-def get_collection():
-    client = chromadb.PersistentClient(path=DB_PATH)
-    return client.get_or_create_collection(COLLECTION_NAME)
-
-
-@lru_cache
-def get_vectorstore():
-    from langchain_chroma import Chroma
-    return Chroma(
-        persist_directory=DB_PATH,
-        collection_name=COLLECTION_NAME,
-        embedding_function=get_emb(),
-    )

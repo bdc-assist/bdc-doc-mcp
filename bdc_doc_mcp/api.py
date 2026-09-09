@@ -1,22 +1,25 @@
 import datetime
 import difflib
+import os
 import re
+import secrets
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from openai import APIError
 from pydantic import BaseModel
 
-from .config import get_collection, get_vectorstore
+from .config import get_emb
+from .db import get_db
 
-app = FastAPI(title="BDC Doc RAG", version="0.1", description="Search-only doc RAG service")
+app = FastAPI(title="BDC Doc RAG", version="0.1", description="Search + ingest doc RAG service")
 
 
 async def _as_json_error(request, exc):
     # unhandled => plain-text 500, and every client dies on .json() instead of seeing the cause.
     # APIError: embedding provider unreachable, expired key, rate limit (openai/azure/vllm — not ollama).
-    # ValueError: a bad *_MODEL_PROVIDER in .env, which otherwise reads as a mystery 500.
+    # ValueError: a bad *_MODEL_PROVIDER / DB_BACKEND in .env, which otherwise reads as a mystery 500.
     status = 502 if isinstance(exc, APIError) else 500
     return JSONResponse(status_code=status, content={"detail": f"{type(exc).__name__}: {exc}"})
 
@@ -72,36 +75,68 @@ def _keyword_rank(query: str, docs: list, metas: list, k: int) -> list:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "documents": get_collection().count()}
+    return {"status": "ok", "documents": get_db().count()}
 
 
 @app.post("/search")
 def search(req: SearchRequest):
     types = [t.strip() for t in (req.doc_type or "").split(",") if t.strip()]
-    if types:
-        conds = [{"doc_type": {"$in": types}}]
-    elif req.date_from or req.date_to:
-        # only event/update docs carry date_num, so the date condition already narrows the
-        # search — keeping the default scope here would contradict it and match nothing
-        conds = []
-    else:
-        conds = [{"doc_type": {"$in": DEFAULT_TYPES}}]
-    # date_num is the int form (YYYYMMDD) of `date` — chroma range operators are numeric-only
-    if req.date_from:
-        conds.append({"date_num": {"$gte": int(req.date_from.strftime("%Y%m%d"))}})
-    if req.date_to:
-        conds.append({"date_num": {"$lte": int(req.date_to.strftime("%Y%m%d"))}})
-    flt = conds[0] if len(conds) == 1 else {"$and": conds}
+    if not types and not (req.date_from or req.date_to):
+        # a date filter already narrows to the dated types (event/update) — keeping the
+        # default scope there would contradict it and match nothing
+        types = DEFAULT_TYPES
+    date_from = int(req.date_from.strftime("%Y%m%d")) if req.date_from else None
+    date_to = int(req.date_to.strftime("%Y%m%d")) if req.date_to else None
     if req.mode == "keyword":
-        # ponytail: full scan of the filtered collection per query — chroma's $contains
-        # is case-sensitive; move to a real FTS index if the collection outgrows memory
-        data = get_collection().get(where=flt, include=["documents", "metadatas"])
-        return _keyword_rank(req.query, data["documents"], data["metadatas"], req.k)
-    hits = get_vectorstore().similarity_search_with_score(req.query, k=req.k, filter=flt)
-    return [
-        {"content": doc.page_content, "metadata": doc.metadata, "score": float(score)}
-        for doc, score in hits
-    ]
+        # ponytail: full scan of the filtered collection per query — move to a real
+        # FTS index if the collection outgrows memory
+        docs, metas = get_db().scan(types, date_from, date_to)
+        return _keyword_rank(req.query, docs, metas, req.k)
+    return get_db().search(get_emb().embed_query(req.query), req.k, types, date_from, date_to)
+
+
+# --- ingest API: bdc-doc-builder pushes finished {id, content, embedding, metadata}
+# records here; this service never builds content itself ---
+
+class Chunk(BaseModel):
+    id: str
+    content: str
+    embedding: list[float]
+    metadata: dict = {}
+
+
+def _require_ingest_token(authorization: str | None):
+    token = os.getenv("INGEST_TOKEN")
+    if not token:
+        raise HTTPException(status_code=403, detail="ingest disabled: set INGEST_TOKEN on the server")
+    if not secrets.compare_digest(authorization or "", f"Bearer {token}"):
+        raise HTTPException(status_code=401, detail="bad ingest token")
+
+
+def _scalar_meta(meta: dict) -> dict:
+    # backends only accept scalar metadata values
+    return {k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))}
+
+
+@app.post("/ingest/upsert")
+def ingest_upsert(chunks: list[Chunk], authorization: str | None = Header(default=None)):
+    _require_ingest_token(authorization)
+    if not chunks:
+        return {"upserted": 0, "documents": get_db().count()}
+    get_db().upsert(
+        ids=[c.id for c in chunks],
+        contents=[c.content for c in chunks],
+        embeddings=[c.embedding for c in chunks],
+        metadatas=[_scalar_meta(c.metadata) for c in chunks],
+    )
+    return {"upserted": len(chunks), "documents": get_db().count()}
+
+
+@app.post("/ingest/reset")
+def ingest_reset(authorization: str | None = Header(default=None)):
+    _require_ingest_token(authorization)
+    get_db().reset()
+    return {"status": "reset"}
 
 
 if __name__ == "__main__":

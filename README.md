@@ -1,18 +1,19 @@
 # BDC Doc RAG
 
-The documentation RAG MCP of [bdc-assist](https://github.com/bdc-assist/bdc-assist)
+The documentation RAG MCP of [bdc-assist](https://github.com/bdc-assist/bdc-assist).
 
+Serving side only: the API/MCP servers and the vector DB. Content is built and pushed
+by [bdc-doc-builder](https://github.com/bdc-assist/bdc-doc-builder), which lives outside
+this security boundary and talks to the ingest API — nothing here scrapes, chunks, or
+calls a completion LLM.
 
 ```
-bdc_doc_mcp/config.py      env-driven embeddings/LLM/Chroma (replaces utils/__init__.set_emb_llm)
-bdc_doc_mcp/ingest.py      .pkl/.md/.mdx/.txt/.pdf → embeddings → Chroma (replaces utils/chroma/utils.py)
-bdc_doc_mcp/api.py         FastAPI: /health /search
+bdc_doc_mcp/config.py      env-driven query embeddings + DB settings
+bdc_doc_mcp/db.py          vector-DB backends behind one interface (chroma today; DB_BACKEND selects)
+bdc_doc_mcp/api.py         FastAPI: /health /search + token-guarded /ingest/upsert /ingest/reset
 bdc_doc_mcp/mcp_server.py  search_docs MCP tool for AI agents — self-contained, same search as the API
-bdc_doc_mcp/preproc/       source-specific preprocessing pipeline
 tests/                     self-checks + API / agent notebooks
-data/                      preproc output (*.pkl), ingest input
 ```
-
 
 ## Setup
 
@@ -21,47 +22,16 @@ uv sync
 cp .env.example .env    # then fill in keys/URLs
 ```
 
-### Source repos
+Embeddings (for queries) use Ollama on Sterling (connect via RENCI VPN):
 
-Only needed for preprocessing (`--sources all`); the API/MCP server and ingesting
-existing `.pkl` files work without them. Clone next to this repo (or point the env
-vars at them):
-
-```bash
-git clone https://github.com/stagecc/interim-bdc-website ../interim-bdc-website   # BDC_WEBSITE_DIR
-git clone https://github.com/stagecc/bdc-gitbook ../bdc-gitbook                   # BDC_GITBOOK_DIR
-```
-
-### Models
-
-For completion, use the OpenAI API on Azure (`gpt-4o-mini` by default)
-
-For embeddings, use Ollama on Sterling (connect via RENCI VPN)
 ```bash
 kubectl -n ner port-forward svc/ollama 11434:11434
 ```
-Or using local Ollama with `groonga/bge-m3-Q4_K_M-GGUF` model. 
 
-
-
-## Ingest
-
-Full rebuild from every source (needs the two source repos cloned — see Setup;
-writes `data/*.pkl`, then loads them):
-
-```bash
-uv run python -m bdc_doc_mcp.preproc.pipeline --sources all --ingest --reset
-```
-
-Individual files or directories:
-
-```bash
-uv run python -m bdc_doc_mcp.ingest ./data/docs.pkl --doc-type docs   # BDC_Chatbot preproc .pkl
-uv run python -m bdc_doc_mcp.ingest ../interim-bdc-website/src/pages --doc-type page --reset
-```
-
-Embedding models are not interchangeable within a collection — `bge-m3` is 1024-dim,
-`text-embedding-3-small` 1536. Switching models means `--reset` and a full re-ingest.
+Or a local Ollama with `groonga/bge-m3-Q4_K_M-GGUF`. **This must be the same model
+bdc-doc-builder embedded the documents with** — vectors from different models don't mix
+(`bge-m3` is 1024-dim, `text-embedding-3-small` 1536); switching models means a full
+re-push from the builder.
 
 ## API
 
@@ -73,6 +43,8 @@ uv run uvicorn bdc_doc_mcp.api:app --port 8000     # docs at /docs
 |---|---|---|
 | `GET /health` | — | `{status, documents}` |
 | `POST /search` | `{query, k, mode?, doc_type?, date_from?, date_to?}` | ranked chunks + metadata + score |
+| `POST /ingest/upsert` | `[{id, content, embedding, metadata}]` | `{upserted, documents}` |
+| `POST /ingest/reset` | — | `{status}` |
 
 `mode` is `embedding` (default; semantic similarity, score = distance, lower is better)
 or `keyword` (fuzzy literal word matching — ignores case/punctuation and tolerates
@@ -84,8 +56,18 @@ explicitly to search them.
 `date_from`/`date_to` (`YYYY-MM-DD`, inclusive) filter by date; only event and update docs
 carry a date, so a date filter implicitly narrows to those types.
 
-The service is search-only by design; ingestion happens offline via the CLI (see Ingest)
-and answering is the caller's job — an agent brings its own LLM.
+The `/ingest/*` endpoints are the write path for bdc-doc-builder: they take finished
+records (embeddings pre-computed on the builder side) and require
+`Authorization: Bearer $INGEST_TOKEN`; with `INGEST_TOKEN` unset, ingest is disabled.
+Answering is the caller's job — an agent brings its own LLM.
+
+## DB backends
+
+`bdc_doc_mcp/db.py` keeps the vector DB behind a five-method interface
+(`count/search/scan/upsert/reset`); everything chroma-specific — filter syntax,
+`DB_PATH`, the collection — lives in its `ChromaDB` class. To swap in a remote DB
+(postgres/pgvector, qdrant, ...), implement the same methods, register the class in
+`BACKENDS`, and set `DB_BACKEND`.
 
 ## MCP
 
@@ -94,8 +76,8 @@ uv run python -m bdc_doc_mcp.mcp_server           # stdio
 uv run python -m bdc_doc_mcp.mcp_server --http    # streamable HTTP, port MCP_PORT (default 8001)
 ```
 
-Exposes one tool, `search_docs` — same search as the API but queries Chroma directly,
-so the API service doesn't need to run. Needs an ingested `.chroma_db` + embeddings.
+Exposes one tool, `search_docs` — same search as the API but queries the DB directly,
+so the API service doesn't need to run. Needs a pushed DB + embeddings.
 
 Stdio clients (Claude Desktop/Code, Cursor) launch the server themselves — register it:
 
@@ -110,37 +92,19 @@ Network clients: run `--http` and point them at `http://host:8001/mcp` instead.
 
 Smoke test: `uv run python tests/test_mcp.py`
 
-## Preprocessing
-
-`bdc_doc_mcp/preproc/` is the BDC_Chatbot pipeline, ported:
-
-| Module | Source | Ported from (BDC_Chatbot) | Notes |
-|---|---|---|---|
-| `bdc_repo.py` | interim-bdc-website MDX | `utils/preproc/proc_BDC_repo.py` (verbatim-ish) | fellows, events, latest-updates, pages |
-| `bdc_docs.py` | bdc-gitbook markdown | `utils/preproc/proc_BDC_docs.py` (module-level LLM init removed) | chunked by header hierarchy; needs the repo cloned |
-| `freshdesk.py` | bdcatalyst.freshdesk.com | `utils/preproc/proc_freshdesk.py` | live scrape |
-| `vids.py` | Google Sheet + Drive SRT | `utils/preproc/proc_BDC_vids.py` (GoogleSheetsReader class flattened) | video transcripts with timestamp URLs |
-| `utils.py` | — | — | LLM chunk contextualizer + summarizer |
-| `pipeline.py` | — | `utils/preproc_doc.py` | orchestrator |
-
-`--no-contextualize` skips the per-chunk LLM call (much faster, weaker retrieval).
-Source paths come from `BDC_WEBSITE_DIR` / `BDC_GITBOOK_DIR`.
-
 ## Tests
 
 ```bash
-uv run python tests/test_ingest.py                             # batching + chunk-id logic, no network
-uv run python tests/test_keyword.py                            # keyword ranking, pure function, no DB or API
-uv run python tests/test_mcp.py                                # starts the server over stdio and exercises its tools; needs .chroma_db + embeddings
+uv run python tests/test_api.py       # ingest+search round-trip over a temp DB, auth — no network
+uv run python tests/test_keyword.py   # keyword ranking, pure function, no DB or API
+uv run python tests/test_mcp.py       # starts the server over stdio and exercises its tools; needs a pushed DB + embeddings
 ```
 
-Notebooks (each starts the API on a free port and shuts it down at the end; both need an
-ingested `.chroma_db`):
+Notebooks (each starts the API on a free port and shuts it down at the end; both need a
+pushed DB):
 
 - `tests/api_test.ipynb` — plain API walkthrough: `/health`, `/search`, `doc_type` filter.
   Only needs the local embeddings.
 - `tests/agent_test.ipynb` — a tool-calling agent (`deepagents`): the configured LLM gets
   `search_docs` as a LangChain tool and decides when to call it. Also needs the completion
   provider reachable.
-
-
