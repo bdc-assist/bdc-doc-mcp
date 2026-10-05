@@ -1,0 +1,9 @@
+# Doc types pushed by r-doc-builder (the doc_type of its sources.yaml entries).
+# description: shown to the agent in the search_docs tool, so say what a type contains.
+# default: true = searched when the caller gives no doc_type. With no defaults at all,
+# every chunk (typed or not) is searched.
+project: My Project
+types:
+  docs:
+    description: product documentation — user guides, how-tos, reference
+    default: true

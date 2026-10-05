@@ -10,10 +10,10 @@ from fastapi.responses import JSONResponse
 from openai import APIError
 from pydantic import BaseModel
 
-from .config import get_emb
+from .config import API_HOST, API_PORT, KEYWORD_FUZZY_CUTOFF, SEARCH_K, doc_types, get_emb
 from .db import get_db
 
-app = FastAPI(title="BDC Doc RAG", version="0.1", description="Search + ingest doc RAG service")
+app = FastAPI(title=f"{doc_types()['project']} Doc RAG", version="0.1", description="Search + ingest doc RAG service")
 
 
 async def _as_json_error(request, exc):
@@ -30,20 +30,21 @@ app.add_exception_handler(ValueError, _as_json_error)
 
 class SearchRequest(BaseModel):
     query: str
-    k: int = 5
+    k: int = SEARCH_K
     # embedding = semantic similarity (score is a distance, lower = better);
     # keyword = case-insensitive word-match count (score is a count, higher = better)
     mode: Literal["embedding", "keyword"] = "embedding"
-    doc_type: str | None = None  # CSV of types, e.g. "page,faq"; None = DEFAULT_TYPES
-    # inclusive date range; only event/update docs carry a date, so a date filter
-    # implicitly narrows the search to those types
+    doc_type: str | None = None  # CSV of types, e.g. "page,faq"; None = default_types()
+    # inclusive date range; only chunks whose source carried a date match, so a date filter
+    # implicitly narrows to those
     date_from: datetime.date | None = None
     date_to: datetime.date | None = None
 
 
-# default search scope; fellow and the time-sensitive update/event types
-# pollute general doc search — ask for them explicitly via doc_type
-DEFAULT_TYPES = ["docs", "page", "faq", "video"]
+def default_types():
+    # default search scope: the doc_types.yaml entries flagged default. Time-sensitive or niche
+    # types (events, people) pollute general search — leave them default: false and ask by name
+    return [name for name, t in doc_types()["types"].items() if t["default"]]
 
 
 def _norm(text: str) -> str:
@@ -61,7 +62,7 @@ def _keyword_rank(query: str, docs: list, metas: list, k: int) -> list:
     # ponytail: difflib over the whole filtered vocab per query, on top of the
     # full-collection scan — swap in a real FTS/fuzzy index if this gets slow
     vocab = list({w for text in texts for w in text.split()})
-    variants = {t: {t, *difflib.get_close_matches(t, vocab, n=5, cutoff=0.8)} for t in terms}
+    variants = {t: {t, *difflib.get_close_matches(t, vocab, n=5, cutoff=KEYWORD_FUZZY_CUTOFF)} for t in terms}
     scored = []
     for text, content, meta in zip(texts, docs, metas):
         counts = [sum(text.count(v) for v in variants[t]) for t in terms]
@@ -84,7 +85,7 @@ def search(req: SearchRequest):
     if not types and not (req.date_from or req.date_to):
         # a date filter already narrows to the dated types (event/update) — keeping the
         # default scope there would contradict it and match nothing
-        types = DEFAULT_TYPES
+        types = default_types()
     date_from = int(req.date_from.strftime("%Y%m%d")) if req.date_from else None
     date_to = int(req.date_to.strftime("%Y%m%d")) if req.date_to else None
     if req.mode == "keyword":
@@ -95,7 +96,7 @@ def search(req: SearchRequest):
     return get_db().search(get_emb().embed_query(req.query), req.k, types, date_from, date_to)
 
 
-# --- ingest API: bdc-doc-builder pushes finished {id, content, embedding, metadata}
+# --- ingest API: r-doc-builder pushes finished {id, content, embedding, metadata}
 # records here; this service never builds content itself ---
 
 class Chunk(BaseModel):
@@ -142,4 +143,4 @@ def ingest_reset(authorization: str | None = Header(default=None)):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host=API_HOST, port=API_PORT)

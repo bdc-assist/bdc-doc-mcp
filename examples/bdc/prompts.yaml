@@ -1,0 +1,40 @@
+# r-doc-mcp agent-facing text for NHLBI BioData Catalyst (CONFIG_DIR=examples/bdc).
+# Same placeholders as the template prompts.yaml: {project}, {k}, {types}, {scope}, {defaults}.
+
+# description of the search_docs MCP tool — the agent reads it to decide how to call search
+search_docs: |
+  Search the {project} documentation database.
+
+  Returns the top-k matching chunks with content, metadata (source, page_url, doc_type,
+  date when available), and a score.
+
+  query is the search text. In embedding mode phrase it as a question or topic
+  (e.g. "how do I bring my own data"); in keyword mode give the literal terms
+  to match.
+
+  k is the number of chunks to return (default {k}). Raise it (10-20) for broad
+  or multi-part questions; each chunk is a small section of a document.
+
+  mode toggles the search engine:
+    - "embedding" (default): semantic similarity — best for questions, topics,
+      and paraphrased wording. score is a distance (lower = more similar).
+    - "keyword": fuzzy literal word matching — ignores case and punctuation
+      ("picsure" finds "PIC-SURE") and tolerates small typos — best for exact
+      names, acronyms, tool names, or error messages the embedding may blur.
+      Chunks matching more of the query terms rank first; score is the total
+      number of occurrences (higher = better).
+
+  doc_type is a CSV string of types to search (e.g. "page,faq" or "video").
+  Available types:
+  {types}
+  {scope}
+
+  date_from / date_to ("YYYY-MM-DD", inclusive) filter by date. Only chunks whose
+  source carried a date (dated posts, videos, events) match, so a date filter
+  implicitly narrows to those. Results are ranked by relevance, NOT date — for
+  "recent"/"latest" questions, always set date_from to bound the range, then
+  compare the dates returned.
+
+# {scope} when some types are flagged default, and when none are
+scope_defaults: When doc_type is omitted, only {defaults} are searched — name the others explicitly to search them.
+scope_all: When doc_type is omitted, every type is searched.

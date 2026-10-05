@@ -1,0 +1,22 @@
+# Doc types of the FastAPI documentation (CONFIG_DIR=examples/fastapi), pushed by r-doc-builder's
+# examples/fastapi/sources.yaml. Stored in its own collection, "fastapi".
+project: FastAPI
+types:
+  tutorial:
+    description: Tutorial - User Guide, step by step — path/query/body parameters, response models, dependencies, security, SQL databases, testing, CORS, background tasks, bigger applications
+    default: true
+  advanced:
+    description: Advanced User Guide — custom responses, middleware, settings, lifespan events, WebSockets, sub-applications, behind a proxy, generating clients, advanced dependencies and security
+    default: true
+  how-to:
+    description: How To recipes — GraphQL, custom docs UI assets, extending OpenAPI, custom request/route classes, migrating from Pydantic v1 to v2
+    default: true
+  deployment:
+    description: Deployment — concepts, versions, HTTPS, running a server manually, server workers, Docker, FastAPI Cloud and other cloud providers
+    default: true
+  page:
+    description: top-level pages — overview and features, Python types intro, concurrency and async/await, virtual environments, environment variables, FastAPI CLI, editor support, full-stack template, alternatives, history, benchmarks
+    default: true
+  release:
+    description: release notes, a section per FastAPI version (version and date in the heading) listing features, fixes, breaking changes and upgrades
+    default: false

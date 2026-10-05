@@ -1,18 +1,17 @@
-# BDC Doc RAG
+# r-doc-mcp
 
-The documentation RAG MCP of [bdc-assist](https://github.com/bdc-assist/bdc-assist).
+The documentation RAG MCP of r-assist.
 
 Serving side only: the API/MCP servers and the vector DB. Content is built and pushed
-by [bdc-doc-builder](https://github.com/bdc-assist/bdc-doc-builder), which lives outside
-this security boundary and talks to the ingest API — nothing here scrapes, chunks, or
-calls a completion LLM.
+by [r-doc-builder](../r-doc-builder), which lives outside this security boundary and
+talks to the ingest API — nothing here scrapes, chunks, or calls a completion LLM.
 
 ```
-bdc_doc_mcp/config.py      env-driven query embeddings + DB settings
-bdc_doc_mcp/db.py          vector-DB backends behind one interface (chroma today; DB_BACKEND selects)
-bdc_doc_mcp/api.py         FastAPI: /health /search + token-guarded /ingest/upsert /ingest/reset
-bdc_doc_mcp/mcp_server.py  search_docs MCP tool for AI agents — self-contained, same search as the API
-tests/                     self-checks + API / agent notebooks
+r_doc_mcp/config.py      env-driven query embeddings + DB settings
+r_doc_mcp/db.py          vector-DB backends behind one interface (chroma today; DB_BACKEND selects)
+r_doc_mcp/api.py         FastAPI: /health /search + token-guarded /ingest/upsert /ingest/reset
+r_doc_mcp/mcp_server.py  search_docs MCP tool for AI agents — self-contained, same search as the API
+tests/                   self-checks + API / agent notebooks
 ```
 
 ## Setup
@@ -22,21 +21,17 @@ uv sync
 cp .env.example .env    # then fill in keys/URLs
 ```
 
-Embeddings (for queries) use Ollama on Sterling (connect via RENCI VPN):
-
-```bash
-kubectl -n ner port-forward svc/ollama 11434:11434
-```
-
-Or a local Ollama with `groonga/bge-m3-Q4_K_M-GGUF`. **This must be the same model
-bdc-doc-builder embedded the documents with** — vectors from different models don't mix
+Embeddings (for queries) use a local Ollama, e.g. `bge-m3`. **This must be the same model
+r-doc-builder embedded the documents with** — vectors from different models don't mix
 (`bge-m3` is 1024-dim, `text-embedding-3-small` 1536); switching models means a full
 re-push from the builder.
+
+To run the three repos together from scratch, follow "From clone to chat" in r-assist's README.
 
 ## API
 
 ```bash
-uv run uvicorn bdc_doc_mcp.api:app --port 8000     # docs at /docs
+uv run uvicorn r_doc_mcp.api:app --port 8000     # docs at /docs (or: python -m r_doc_mcp.api, binds API_HOST:API_PORT)
 ```
 
 | Endpoint | Body | Returns |
@@ -50,20 +45,36 @@ uv run uvicorn bdc_doc_mcp.api:app --port 8000     # docs at /docs
 or `keyword` (fuzzy literal word matching — ignores case/punctuation and tolerates
 small typos, so `picsure` finds "PIC-SURE"; score = occurrence count, higher is
 better — use for exact names/acronyms).
-`doc_type` is a CSV of types to search (e.g. `page,faq`). When omitted, only `docs`,
-`page`, `faq`, and `video` are searched — name `fellow`, `update`, or `event`
-explicitly to search them.
-`date_from`/`date_to` (`YYYY-MM-DD`, inclusive) filter by date; only event and update docs
-carry a date, so a date filter implicitly narrows to those types.
+`doc_type` is a CSV of types to search (e.g. `page,faq`). Types and the default scope
+come from <CONFIG_DIR>/doc_types.yaml (default config/; examples/bdc/doc_types.yaml is a
+filled-in one). When doc_type is omitted only the types flagged default are searched;
+with no defaults declared, everything is.
+`date_from`/`date_to` (`YYYY-MM-DD`, inclusive) filter by date; only chunks that carry
+a date match, so a date filter implicitly narrows to those.
 
-The `/ingest/*` endpoints are the write path for bdc-doc-builder: they take finished
+The `/ingest/*` endpoints are the write path for r-doc-builder: they take finished
 records (embeddings pre-computed on the builder side) and require
 `Authorization: Bearer $INGEST_TOKEN`; with `INGEST_TOKEN` unset, ingest is disabled.
 Answering is the caller's job — an agent brings its own LLM.
 
+## Doc types
+
+`config/doc_types.yaml` declares the doc_type values r-doc-builder pushes for this
+project — it drives the default search scope and the search_docs tool description,
+so a new deployment only needs a new YAML file, not a code change. Each type has a
+`description` (shown to the agent) and a `default` flag (searched when the caller
+gives no doc_type). Set `CONFIG_DIR=examples/bdc` (or `examples/fastapi`) to see a
+filled-in example. Each `CONFIG_DIR` gets its own collection in the DB, named after the folder
+(`config`, `bdc`, ...; `COLLECTION_NAME` overrides it), so switching examples never mixes or
+overwrites another's chunks, and `--reset` only clears the current one.
+
+The wording of the search_docs tool description lives in `config/prompts.yaml`, a template
+with `{project}`, `{k}`, `{types}` and `{scope}` filled from doc_types.yaml and `SEARCH_K`.
+Edit it freely (literal braces as `{{ }}`); the server reads it once at startup.
+
 ## DB backends
 
-`bdc_doc_mcp/db.py` keeps the vector DB behind a five-method interface
+`r_doc_mcp/db.py` keeps the vector DB behind a five-method interface
 (`count/search/scan/upsert/reset`); everything chroma-specific — filter syntax,
 `DB_PATH`, the collection — lives in its `ChromaDB` class. To swap in a remote DB
 (postgres/pgvector, qdrant, ...), implement the same methods, register the class in
@@ -72,8 +83,8 @@ Answering is the caller's job — an agent brings its own LLM.
 ## MCP
 
 ```bash
-uv run python -m bdc_doc_mcp.mcp_server           # stdio
-uv run python -m bdc_doc_mcp.mcp_server --http    # streamable HTTP, port MCP_PORT (default 8001)
+uv run python -m r_doc_mcp.mcp_server           # stdio
+uv run python -m r_doc_mcp.mcp_server --http    # streamable HTTP on MCP_HOST:MCP_PORT (default 127.0.0.1:8001)
 ```
 
 Exposes one tool, `search_docs` — same search as the API but queries the DB directly,
@@ -82,11 +93,14 @@ so the API service doesn't need to run. Needs a pushed DB + embeddings.
 Stdio clients (Claude Desktop/Code, Cursor) launch the server themselves — register it:
 
 ```json
-{"mcpServers": {"bdc-doc-mcp": {
+{"mcpServers": {"r-doc-mcp": {
   "command": "uv",
-  "args": ["--directory", "/path/to/bdc-doc-mcp", "run", "python", "-m", "bdc_doc_mcp.mcp_server"]
+  "args": ["--directory", "/path/to/r-doc-mcp", "run", "python", "-m", "r_doc_mcp.mcp_server"]
 }}}
 ```
+
+The `mcpServers` key above is the client's own label for the server; the name the server
+reports for itself is `MCP_SERVER_NAME` (default `r-doc-mcp`).
 
 Network clients: run `--http` and point them at `http://host:8001/mcp` instead.
 
@@ -95,6 +109,7 @@ Smoke test: `uv run python tests/test_mcp.py`
 ## Tests
 
 ```bash
+uv run python tests/test_doc_types.py # doc_types.yaml + prompts.yaml -> default scope + tool description — no network
 uv run python tests/test_api.py       # ingest+search round-trip over a temp DB, auth — no network
 uv run python tests/test_keyword.py   # keyword ranking, pure function, no DB or API
 uv run python tests/test_mcp.py       # starts the server over stdio and exercises its tools; needs a pushed DB + embeddings

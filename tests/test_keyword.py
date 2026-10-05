@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bdc_doc_mcp.api import _keyword_rank
+from r_doc_mcp.api import _keyword_rank
 
 docs = [
     "PIC-SURE offers an API for querying data.",
@@ -28,5 +28,17 @@ hits = _keyword_rank("picsur", docs, metas, k=5)  # typo, one letter short
 assert len(hits) == 2, hits
 
 assert _keyword_rank("nomatch", docs, metas, k=5) == []
+
+# the fuzzy cutoff comes from config: raise it to "identical only" and the typo stops matching
+from r_doc_mcp import api, config
+
+hits = _keyword_rank("picsuer", docs, metas, k=5)  # transposed letters: only a fuzzy match finds it
+assert len(hits) == 2, hits
+assert api.KEYWORD_FUZZY_CUTOFF is config.KEYWORD_FUZZY_CUTOFF
+api.KEYWORD_FUZZY_CUTOFF = 1.0
+try:
+    assert _keyword_rank("picsuer", docs, metas, k=5) == [], "cutoff 1.0 must kill the fuzzy match"
+finally:
+    api.KEYWORD_FUZZY_CUTOFF = config.KEYWORD_FUZZY_CUTOFF
 
 print("keyword ranking self-check passed")

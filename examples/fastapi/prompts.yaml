@@ -1,0 +1,40 @@
+# r-doc-mcp agent-facing text for the FastAPI documentation (CONFIG_DIR=examples/fastapi).
+# Same placeholders as the template prompts.yaml: {project}, {k}, {types}, {scope}, {defaults}.
+
+# description of the search_docs MCP tool — the agent reads it to decide how to call search
+search_docs: |
+  Search the {project} documentation database.
+
+  Returns the top-k matching chunks with content, metadata (source, page_url, doc_type,
+  hierarchy = the page's heading path), and a score. Code samples are not in the chunks:
+  lines like {{* ../../docs_src/... *}} mark where the docs show one.
+
+  query is the search text. In embedding mode phrase it as a question or topic
+  (e.g. "how do I run code after returning a response"); in keyword mode give the
+  literal terms to match.
+
+  k is the number of chunks to return (default {k}). Raise it (10-20) for broad
+  or multi-part questions; each chunk is a small section of a page.
+
+  mode toggles the search engine:
+    - "embedding" (default): semantic similarity — best for questions, topics,
+      and paraphrased wording. score is a distance (lower = more similar).
+    - "keyword": fuzzy literal word matching — ignores case and punctuation
+      ("apirouter" finds "APIRouter") and tolerates small typos — best for class
+      and function names (Depends, HTTPException), settings, version numbers or
+      error messages the embedding may blur. Chunks matching more of the query
+      terms rank first; score is the total number of occurrences (higher = better).
+
+  doc_type is a CSV string of types to search (e.g. "tutorial,advanced" or "release").
+  Available types:
+  {types}
+  {scope}
+
+  date_from / date_to ("YYYY-MM-DD", inclusive) filter by date, but no FastAPI chunk
+  carries one, so leave them unset. For version history ("when was X added", "what
+  changed in 0.115") search doc_type "release" in keyword mode: each release-notes
+  section names its version and date in the hierarchy.
+
+# {scope} when some types are flagged default, and when none are
+scope_defaults: When doc_type is omitted, only {defaults} are searched — name the others explicitly to search them.
+scope_all: When doc_type is omitted, every type is searched.

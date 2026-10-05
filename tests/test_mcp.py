@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent  # -m resolves the package from th
 async def main():
     params = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "bdc_doc_mcp.mcp_server"],
+        args=["-m", "r_doc_mcp.mcp_server"],
         env={**os.environ},
         cwd=str(ROOT),
     )

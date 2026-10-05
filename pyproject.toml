@@ -1,5 +1,5 @@
 [project]
-name = "bdc-doc-mcp"
+name = "r-doc-mcp"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -8,8 +8,9 @@ dependencies = [
     "httpx>=0.28.1",
     "langchain-ollama>=1.1.0",
     "langchain-openai>=1.4.1",
-    "mcp[cli]>=1.28.1",
+    "mcp[cli]>=1.28.1,<2",  # 2.x renamed FastMCP -> MCPServer; mcp_server.py targets 1.x's FastMCP
     "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
     "uvicorn>=0.51.0",
 ]
 

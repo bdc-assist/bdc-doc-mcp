@@ -1,5 +1,5 @@
 """Ingest + search round-trip through the HTTP API against a throwaway chroma DB.
-No network: embeddings are pushed pre-computed (as bdc-doc-builder does) and the
+No network: embeddings are pushed pre-computed (as r-doc-builder does) and the
 searches use keyword mode. Embedding-mode search needs a live embedding provider —
 covered by test_mcp.py."""
 import os
@@ -9,15 +9,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# must be set before bdc_doc_mcp.config is imported (real env wins over .env)
-_tmp = tempfile.mkdtemp(prefix="bdc_test_chroma_")
+# must be set before r_doc_mcp.config is imported (real env wins over .env)
+_tmp = tempfile.mkdtemp(prefix="r_test_chroma_")
 os.environ["DB_PATH"] = _tmp
 os.environ["COLLECTION_NAME"] = "test"
 os.environ["INGEST_TOKEN"] = "test-token"
+os.environ["CONFIG_DIR"] = str(Path(__file__).resolve().parent.parent / "examples" / "bdc")
 
 from fastapi.testclient import TestClient
 
-from bdc_doc_mcp.api import app
+from r_doc_mcp.api import app
 
 client = TestClient(app)
 AUTH = {"Authorization": "Bearer test-token"}
@@ -72,7 +73,29 @@ def test_ingest_and_search_roundtrip():
     assert client.get("/health").json()["documents"] == 0
 
 
+def test_search_k_default_from_config():
+    import inspect
+
+    from r_doc_mcp import config
+    from r_doc_mcp.api import SearchRequest
+    from r_doc_mcp.mcp_server import search_docs, tool_description
+
+    assert SearchRequest(query="q").k == config.SEARCH_K
+    assert f"(default {config.SEARCH_K})" in tool_description()
+    fn = getattr(search_docs, "fn", search_docs)  # plain function, or the mcp wrapper's original
+    assert inspect.signature(fn).parameters["k"].default == config.SEARCH_K
+
+
+def test_mcp_server_name_from_config():
+    from r_doc_mcp import config
+    from r_doc_mcp.mcp_server import mcp
+
+    assert mcp.name == config.MCP_SERVER_NAME
+
+
 if __name__ == "__main__":
+    test_search_k_default_from_config()
+    test_mcp_server_name_from_config()
     test_ingest_requires_token()
     test_ingest_and_search_roundtrip()
     print("api ingest/search self-check passed")

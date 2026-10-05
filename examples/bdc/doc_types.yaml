@@ -1,0 +1,23 @@
+project: NHLBI BioData Catalyst®
+types:
+  docs:
+    description: BDC GitBook platform documentation — user guides, how-tos, and technical reference (bdcatalyst.gitbook.io)
+    default: true
+  page:
+    description: key pages of the BDC website — about/overview, joining BDC, analyzing & sharing data, usage costs and terms
+    default: true
+  faq:
+    description: Freshdesk help-desk FAQ articles (support questions & answers)
+    default: true
+  video:
+    description: transcripts of BDC YouTube tutorials/webinars, with timestamped links into the video
+    default: true
+  fellow:
+    description: BDC Fellows profiles — fellowship recipients and their research projects
+    default: false
+  update:
+    description: dated news posts ("latest updates") from the BDC website
+    default: false
+  event:
+    description: dated BDC events — webinars, workshops, deadlines
+    default: false
