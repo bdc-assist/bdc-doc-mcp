@@ -3,12 +3,13 @@ import difflib
 import os
 import re
 import secrets
+from collections import Counter
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from openai import APIError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import API_HOST, API_PORT, KEYWORD_FUZZY_CUTOFF, SEARCH_K, doc_types, get_emb
 from .db import get_db
@@ -20,17 +21,19 @@ async def _as_json_error(request, exc):
     # unhandled => plain-text 500, and every client dies on .json() instead of seeing the cause.
     # APIError: embedding provider unreachable, expired key, rate limit (openai/azure/vllm — not ollama).
     # ValueError: a bad *_MODEL_PROVIDER / DB_BACKEND in .env, which otherwise reads as a mystery 500.
+    # Exception: anything else, e.g. the DB rejecting a query embedding of the wrong size.
     status = 502 if isinstance(exc, APIError) else 500
     return JSONResponse(status_code=status, content={"detail": f"{type(exc).__name__}: {exc}"})
 
 
 app.add_exception_handler(APIError, _as_json_error)
 app.add_exception_handler(ValueError, _as_json_error)
+app.add_exception_handler(Exception, _as_json_error)
 
 
 class SearchRequest(BaseModel):
     query: str
-    k: int = SEARCH_K
+    k: int = Field(SEARCH_K, ge=1)  # 0 or less: a 422 the agent can correct, not "no results"
     # embedding = semantic similarity (score is a distance, lower = better);
     # keyword = case-insensitive word-match count (score is a count, higher = better)
     mode: Literal["embedding", "keyword"] = "embedding"
@@ -65,7 +68,8 @@ def _keyword_rank(query: str, docs: list, metas: list, k: int) -> list:
     variants = {t: {t, *difflib.get_close_matches(t, vocab, n=5, cutoff=KEYWORD_FUZZY_CUTOFF)} for t in terms}
     scored = []
     for text, content, meta in zip(texts, docs, metas):
-        counts = [sum(text.count(v) for v in variants[t]) for t in terms]
+        words = Counter(text.split())  # whole words: "api" must not count inside "rapid"
+        counts = [sum(words[v] for v in variants[t]) for t in terms]
         matched = sum(1 for c in counts if c)
         if matched:
             scored.append((matched, sum(counts), content, meta))
@@ -110,7 +114,8 @@ def _require_ingest_token(authorization: str | None):
     token = os.getenv("INGEST_TOKEN")
     if not token:
         raise HTTPException(status_code=403, detail="ingest disabled: set INGEST_TOKEN on the server")
-    if not secrets.compare_digest(authorization or "", f"Bearer {token}"):
+    # bytes: compare_digest raises on non-ASCII str, which a crafted header turned into a 500
+    if not secrets.compare_digest((authorization or "").encode(), f"Bearer {token}".encode()):
         raise HTTPException(status_code=401, detail="bad ingest token")
 
 

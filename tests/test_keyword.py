@@ -29,6 +29,10 @@ assert len(hits) == 2, hits
 
 assert _keyword_rank("nomatch", docs, metas, k=5) == []
 
+# whole words only: "api" used to score twice inside "rapid therapist" and outrank the real hit
+hits = _keyword_rank("api", ["A rapid therapist.", "The API."], [{"i": 0}, {"i": 1}], k=5)
+assert [(h["metadata"]["i"], h["score"]) for h in hits] == [(1, 1.0)], hits
+
 # the fuzzy cutoff comes from config: raise it to "identical only" and the typo stops matching
 from r_doc_mcp import api, config
 
