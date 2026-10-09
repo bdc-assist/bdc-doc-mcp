@@ -270,8 +270,10 @@ def test_none_metadata_value_removes_the_key():
 
 def test_metadata_types_survive_a_lookup():
     """r-doc-builder skips a chunk only when stored metadata == new metadata, so every value must
-    come back with the type it was pushed with: an int returning as a float would re-push forever."""
-    meta = {"source": "t", "n": 3, "ratio": 0.5, "whole": 2.0, "flag": True, "off": False, "s": "x"}
+    come back with the type it was pushed with: an int returning as a float would re-push forever.
+    Floats float32 can't hold exactly (0.1, a video's start_seconds) must come back bit-for-bit too."""
+    meta = {"source": "t", "n": 3, "ratio": 0.5, "whole": 2.0, "tenth": 0.1, "start_seconds": 12.345,
+            "flag": True, "off": False, "s": "x"}
     try:
         client.post("/ingest/reset", headers=AUTH)
         client.post("/ingest/upsert", json=[{"id": "t1", "content": "c", "embedding": [1.0, 0.0], "metadata": meta}], headers=AUTH)
