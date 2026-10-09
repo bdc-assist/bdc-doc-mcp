@@ -70,7 +70,8 @@ project — it drives the default search scope and the search_docs tool descript
 so a new deployment only needs a new YAML file, not a code change. Each type has a
 `description` (shown to the agent) and a `default` flag (searched when the caller
 gives no doc_type). Set `CONFIG_DIR=examples/bdc` (or `examples/fastapi`) to see a
-filled-in example. Each `CONFIG_DIR` gets its own collection in the DB, named after the folder
+filled-in example. `examples/fixture` serves r-doc-builder's fake, BDC-shaped test corpus: the
+same doc_types and default scope as `examples/bdc` (`tests/test_doc_types.py` keeps them in step). Each `CONFIG_DIR` gets its own collection in the DB, named after the folder
 (`config`, `bdc`, ...; `COLLECTION_NAME` overrides it), so switching examples never mixes or
 overwrites another's chunks, and `--reset` only clears the current one.
 
