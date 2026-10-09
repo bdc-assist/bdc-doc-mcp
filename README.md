@@ -117,6 +117,8 @@ Smoke test: `uv run python tests/test_mcp.py`
 ```bash
 uv run python tests/test_doc_types.py # doc_types.yaml + prompts.yaml -> default scope + tool description — no network
 uv run python tests/test_api.py       # ingest+search round-trip over a temp DB, auth — no network
+uv run python tests/test_compare_db.py  # the DB comparison below, on throwaway DBs — no network
+uv run python tests/compare_db.py DIR_A DIR_B [--collection C] [--atol X]  # do two DB dirs hold the same chunks? (servers stopped)
 uv run python tests/test_keyword.py   # keyword ranking, pure function, no DB or API
 uv run python tests/test_mcp.py       # starts the server over stdio and exercises its tools; needs a pushed DB + embeddings
 ```
