@@ -136,20 +136,23 @@ def test_embedding_search_filters_and_metadata():
 
 
 def test_ingest_token_edge_cases():
-    """Both ingest routes answer every wrong Authorization with a 401 and write nothing (a non-ASCII
+    """Every ingest route answers every wrong Authorization with a 401 and writes nothing (a non-ASCII
     header used to crash compare_digest into a 500); an empty INGEST_TOKEN disables ingest."""
+    routes = (("/ingest/upsert", CHUNKS), ("/ingest/reset", None), ("/ingest/lookup", {"sources": ["s"]}),
+              ("/ingest/update", [{"id": "1", "metadata": {}}]), ("/ingest/delete", ["1"]))
     assert client.post("/ingest/reset", headers=AUTH).status_code == 200
     wrong = [{}, {"Authorization": "Bearer "}, {"Authorization": "Token test-token"},
              {"Authorization": "Bearer wrong"}, {"Authorization": "Bearer tést".encode("latin-1")}]
     for headers in wrong:
-        for path, body in (("/ingest/upsert", CHUNKS), ("/ingest/reset", None)):
+        for path, body in routes:
             res = client.post(path, json=body, headers=headers)
             assert res.status_code == 401, (path, headers, res.status_code)
     assert client.get("/health").json()["documents"] == 0, "a refused upsert writes nothing"
 
     os.environ["INGEST_TOKEN"] = ""
     try:
-        assert client.post("/ingest/upsert", json=CHUNKS, headers=AUTH).status_code == 403
+        for path, body in routes:
+            assert client.post(path, json=body, headers=AUTH).status_code == 403, path
     finally:
         os.environ["INGEST_TOKEN"] = "test-token"
 
@@ -214,6 +217,77 @@ def test_mcp_server_name_from_config():
     assert mcp.name == config.MCP_SERVER_NAME
 
 
+def _lookup(*sources):
+    res = client.post("/ingest/lookup", json={"sources": list(sources)}, headers=AUTH)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_lookup_update_delete_roundtrip():
+    """r-doc-builder's diff loop: lookup returns stored {id: metadata} for the listed sources only,
+    update rewrites metadata without touching content or vectors, delete removes ids."""
+    from r_doc_mcp.db import get_db
+
+    rows = [
+        {"id": "a1", "content": "alpha one", "embedding": [1.0, 0.0], "metadata": {"source": "a", "page_url": "ua", "title": "A"}},
+        {"id": "a2", "content": "alpha two", "embedding": [0.9, 0.1], "metadata": {"source": "a", "page_url": "ua", "title": "A"}},
+        {"id": "b1", "content": "beta", "embedding": [0.0, 1.0], "metadata": {"source": "b", "page_url": "ub"}},
+    ]
+    try:
+        assert client.post("/ingest/reset", headers=AUTH).status_code == 200
+        assert client.post("/ingest/upsert", json=rows, headers=AUTH).status_code == 200
+
+        assert _lookup("a", "nope") == {"a1": rows[0]["metadata"], "a2": rows[1]["metadata"]}, "only the listed sources"
+
+        res = client.post("/ingest/update", json=[{"id": "a1", "metadata": {"title": "A2"}}], headers=AUTH)
+        assert res.status_code == 200 and res.json() == {"updated": 1}, res.text
+        assert _lookup("a")["a1"] == {"source": "a", "page_url": "ua", "title": "A2"}, "metadata merges; other keys stay"
+        got = get_db().coll.get(ids=["a1"], include=["documents", "embeddings"])
+        assert got["documents"] == ["alpha one"] and list(got["embeddings"][0]) == [1.0, 0.0], "update never touches content or vectors"
+
+        res = client.post("/ingest/delete", json=["a2", "missing"], headers=AUTH)
+        assert res.status_code == 200 and res.json() == {"deleted": 1, "documents": 2}, res.text
+        assert set(_lookup("a", "b")) == {"a1", "b1"}
+    finally:
+        client.post("/ingest/reset", headers=AUTH)
+
+
+def test_none_metadata_value_removes_the_key():
+    """Chroma merges metadata on upsert and update, so a key a record dropped would live on forever;
+    r-doc-builder sends it as None, which must reach Chroma and delete it."""
+    row = {"id": "n1", "content": "c", "embedding": [1.0, 0.0],
+           "metadata": {"source": "n", "date": "2025-01-01", "date_num": 20250101}}
+    try:
+        client.post("/ingest/reset", headers=AUTH)
+        client.post("/ingest/upsert", json=[row], headers=AUTH)
+        client.post("/ingest/update", json=[{"id": "n1", "metadata": {"date": None}}], headers=AUTH)
+        assert _lookup("n")["n1"] == {"source": "n", "date_num": 20250101}, "update with None deletes the key"
+        client.post("/ingest/upsert", json=[{**row, "metadata": {"source": "n", "date_num": None}}], headers=AUTH)
+        assert _lookup("n")["n1"] == {"source": "n"}, "upsert with None deletes the key too"
+    finally:
+        client.post("/ingest/reset", headers=AUTH)
+
+
+def test_metadata_types_survive_a_lookup():
+    """r-doc-builder skips a chunk only when stored metadata == new metadata, so every value must
+    come back with the type it was pushed with: an int returning as a float would re-push forever."""
+    meta = {"source": "t", "n": 3, "ratio": 0.5, "whole": 2.0, "flag": True, "off": False, "s": "x"}
+    try:
+        client.post("/ingest/reset", headers=AUTH)
+        client.post("/ingest/upsert", json=[{"id": "t1", "content": "c", "embedding": [1.0, 0.0], "metadata": meta}], headers=AUTH)
+        got = _lookup("t")["t1"]
+        assert got == meta and {k: type(v) for k, v in got.items()} == {k: type(v) for k, v in meta.items()}, got
+    finally:
+        client.post("/ingest/reset", headers=AUTH)
+
+
+def test_new_ingest_routes_accept_empty_bodies():
+    client.post("/ingest/reset", headers=AUTH)
+    assert _lookup() == {}
+    assert client.post("/ingest/update", json=[], headers=AUTH).json() == {"updated": 0}
+    assert client.post("/ingest/delete", json=[], headers=AUTH).json() == {"deleted": 0, "documents": 0}
+
+
 if __name__ == "__main__":
     test_search_k_default_from_config()
     test_mcp_server_name_from_config()
@@ -222,6 +296,10 @@ if __name__ == "__main__":
     test_search_rejects_k_below_1()
     test_embedding_search_filters_and_metadata()
     test_ingest_token_edge_cases()
+    test_lookup_update_delete_roundtrip()
+    test_none_metadata_value_removes_the_key()
+    test_metadata_types_survive_a_lookup()
+    test_new_ingest_routes_accept_empty_bodies()
     test_unexpected_errors_are_json()
     test_mcp_search_docs_maps_its_arguments()
     print("api ingest/search self-check passed")

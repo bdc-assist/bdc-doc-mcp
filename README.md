@@ -39,6 +39,9 @@ uv run uvicorn r_doc_mcp.api:app --port 8000     # docs at /docs (or: python -m 
 | `GET /health` | — | `{status, documents}` |
 | `POST /search` | `{query, k, mode?, doc_type?, date_from?, date_to?}` | ranked chunks + metadata + score |
 | `POST /ingest/upsert` | `[{id, content, embedding, metadata}]` | `{upserted, documents}` |
+| `POST /ingest/lookup` | `{sources: [str]}` | `{id: metadata}` of the stored chunks with those sources |
+| `POST /ingest/update` | `[{id, metadata}]` | `{updated}` — metadata only, content and vectors stay |
+| `POST /ingest/delete` | `[id]` | `{deleted, documents}` |
 | `POST /ingest/reset` | — | `{status}` |
 
 `mode` is `embedding` (default; semantic similarity, score = distance, lower is better)
@@ -55,6 +58,9 @@ a date match, so a date filter implicitly narrows to those.
 The `/ingest/*` endpoints are the write path for r-doc-builder: they take finished
 records (embeddings pre-computed on the builder side) and require
 `Authorization: Bearer $INGEST_TOKEN`; with `INGEST_TOKEN` unset, ingest is disabled.
+r-doc-builder looks up what is stored for a file's sources before embedding, so a re-push
+embeds only new or changed chunks. Metadata merges into what is stored on upsert and update;
+a `null` value deletes that key.
 Answering is the caller's job — an agent brings its own LLM.
 
 ## Doc types

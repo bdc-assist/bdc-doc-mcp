@@ -3,7 +3,10 @@
 A backend implements: count() -> int; search(embedding, k, types, date_from, date_to)
 -> [{content, metadata, score}] (score = distance, lower is better); scan(types,
 date_from, date_to) -> (documents, metadatas); upsert(ids, contents, embeddings,
-metadatas); reset(). types is a list of doc_type values (None/[] = no type filter);
+metadatas); lookup(sources) -> {id: metadata} of the chunks whose metadata source is
+listed; update_metadata(ids, metadatas); delete(ids); reset(). upsert and
+update_metadata merge metadata into what is stored, and a None value deletes that key.
+types is a list of doc_type values (None/[] = no type filter);
 date_from/date_to are inclusive YYYYMMDD ints matched against metadata date_num.
 Add a backend (postgres/pgvector, qdrant, ...) by writing such a class and
 registering it in BACKENDS; select with DB_BACKEND.
@@ -57,6 +60,16 @@ class ChromaDB:
 
     def upsert(self, ids, contents, embeddings, metadatas):
         self.coll.upsert(ids=ids, documents=contents, embeddings=embeddings, metadatas=metadatas)
+
+    def lookup(self, sources):
+        data = self.coll.get(where={"source": {"$in": list(sources)}}, include=["metadatas"])
+        return {cid: meta or {} for cid, meta in zip(data["ids"], data["metadatas"])}
+
+    def update_metadata(self, ids, metadatas):
+        self.coll.update(ids=ids, metadatas=metadatas)
+
+    def delete(self, ids):
+        self.coll.delete(ids=ids)
 
     def reset(self):
         if COLLECTION_NAME in [c.name for c in self._client.list_collections()]:
