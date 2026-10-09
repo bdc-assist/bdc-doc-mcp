@@ -176,6 +176,33 @@ def test_unexpected_errors_are_json():
         client.post("/ingest/reset", headers=AUTH)
 
 
+def test_fake_embedding_provider_searches_offline():
+    """EMBEDDING_MODEL_PROVIDER=fake (tests, the fixture rehearsal): the query vector is the same hash
+    r-doc-builder's fake provider gives the document, so a chunk's own text finds it first."""
+    from r_doc_mcp import config
+
+    saved = os.environ.get("EMBEDDING_MODEL_PROVIDER")
+    os.environ["EMBEDDING_MODEL_PROVIDER"] = "fake"
+    config.get_emb.cache_clear()
+    try:
+        emb = config.get_emb()
+        assert emb.model == "fake" and len(emb.embed_query("a")) == 32
+        texts = ["PIC-SURE builds cohorts.", "Workspaces hold your analyses.", "Billing projects pay for compute."]
+        rows = [{"id": str(n), "content": t, "embedding": v, "metadata": {"doc_type": "docs"}}
+                for n, (t, v) in enumerate(zip(texts, emb.embed_documents(texts)))]
+        client.post("/ingest/reset", headers=AUTH)
+        assert client.post("/ingest/upsert", json=rows, headers=AUTH).status_code == 200
+        hits = client.post("/search", json={"query": texts[1]}).json()
+        assert hits[0]["content"] == texts[1] and hits[0]["score"] < 1e-6, hits
+    finally:
+        if saved is None:
+            os.environ.pop("EMBEDDING_MODEL_PROVIDER", None)
+        else:
+            os.environ["EMBEDDING_MODEL_PROVIDER"] = saved
+        config.get_emb.cache_clear()
+        client.post("/ingest/reset", headers=AUTH)
+
+
 def test_mcp_search_docs_maps_its_arguments():
     """The MCP tool the agent calls hands each argument to the right SearchRequest field (swapped
     date bounds or a dropped doc_type would pass every HTTP test) and rejects bad ones."""
@@ -303,5 +330,6 @@ if __name__ == "__main__":
     test_metadata_types_survive_a_lookup()
     test_new_ingest_routes_accept_empty_bodies()
     test_unexpected_errors_are_json()
+    test_fake_embedding_provider_searches_offline()
     test_mcp_search_docs_maps_its_arguments()
     print("api ingest/search self-check passed")
