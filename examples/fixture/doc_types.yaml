@@ -1,0 +1,26 @@
+# The fake, BDC-shaped corpus r-doc-builder's examples/fixture builds: the same doc_types and default scope
+# as examples/bdc (tests/test_doc_types.py keeps them in step), invented content. CONFIG_DIR=examples/fixture
+# puts it in its own collection, "fixture", so it never mixes with real data.
+project: the fixture platform (fake data)
+types:
+  docs:
+    description: platform documentation — user guides and how-tos
+    default: true
+  page:
+    description: key pages of the website — about, joining, usage costs
+    default: true
+  faq:
+    description: help-desk FAQ articles
+    default: true
+  video:
+    description: tutorial and webinar transcripts, with timestamped links into the video
+    default: true
+  fellow:
+    description: fellowship recipients and their research projects
+    default: false
+  update:
+    description: dated news posts
+    default: false
+  event:
+    description: dated events — webinars, workshops, office hours
+    default: false
