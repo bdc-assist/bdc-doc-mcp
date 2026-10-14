@@ -39,6 +39,9 @@ uv run uvicorn r_doc_mcp.api:app --port 8000     # docs at /docs (or: python -m 
 | `GET /health` | — | `{status, documents}` |
 | `POST /search` | `{query, k, mode?, doc_type?, date_from?, date_to?}` | ranked chunks + metadata + score |
 | `POST /ingest/upsert` | `[{id, content, embedding, metadata}]` | `{upserted, documents}` |
+| `POST /ingest/lookup` | `{sources: [str]}` | `{id: metadata}` of the stored chunks with those sources |
+| `POST /ingest/update` | `[{id, metadata}]` | `{updated}` — metadata only, content and vectors stay |
+| `POST /ingest/delete` | `[id]` | `{deleted, documents}` |
 | `POST /ingest/reset` | — | `{status}` |
 
 `mode` is `embedding` (default; semantic similarity, score = distance, lower is better)
@@ -55,6 +58,9 @@ a date match, so a date filter implicitly narrows to those.
 The `/ingest/*` endpoints are the write path for r-doc-builder: they take finished
 records (embeddings pre-computed on the builder side) and require
 `Authorization: Bearer $INGEST_TOKEN`; with `INGEST_TOKEN` unset, ingest is disabled.
+r-doc-builder looks up what is stored for a file's sources before embedding, so a re-push
+embeds only new or changed chunks. Metadata merges into what is stored on upsert and update;
+a `null` value deletes that key.
 Answering is the caller's job — an agent brings its own LLM.
 
 ## Doc types
@@ -64,7 +70,8 @@ project — it drives the default search scope and the search_docs tool descript
 so a new deployment only needs a new YAML file, not a code change. Each type has a
 `description` (shown to the agent) and a `default` flag (searched when the caller
 gives no doc_type). Set `CONFIG_DIR=examples/bdc` (or `examples/fastapi`) to see a
-filled-in example. Each `CONFIG_DIR` gets its own collection in the DB, named after the folder
+filled-in example. `examples/fixture` serves r-doc-builder's fake, BDC-shaped test corpus: the
+same doc_types and default scope as `examples/bdc` (`tests/test_doc_types.py` keeps them in step). Each `CONFIG_DIR` gets its own collection in the DB, named after the folder
 (`config`, `bdc`, ...; `COLLECTION_NAME` overrides it), so switching examples never mixes or
 overwrites another's chunks, and `--reset` only clears the current one.
 
@@ -111,6 +118,8 @@ Smoke test: `uv run python tests/test_mcp.py`
 ```bash
 uv run python tests/test_doc_types.py # doc_types.yaml + prompts.yaml -> default scope + tool description — no network
 uv run python tests/test_api.py       # ingest+search round-trip over a temp DB, auth — no network
+uv run python tests/test_compare_db.py  # the DB comparison below, on throwaway DBs — no network
+uv run python tests/compare_db.py DIR_A DIR_B [--collection C] [--atol X]  # do two DB dirs hold the same chunks? (servers stopped)
 uv run python tests/test_keyword.py   # keyword ranking, pure function, no DB or API
 uv run python tests/test_mcp.py       # starts the server over stdio and exercises its tools; needs a pushed DB + embeddings
 ```

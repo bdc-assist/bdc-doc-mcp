@@ -6,7 +6,7 @@ import secrets
 from collections import Counter
 from typing import Literal
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from openai import APIError
 from pydantic import BaseModel, Field
@@ -120,8 +120,8 @@ def _require_ingest_token(authorization: str | None):
 
 
 def _scalar_meta(meta: dict) -> dict:
-    # backends only accept scalar metadata values
-    return {k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))}
+    # backends only accept scalar metadata values; None passes: it deletes that key (see db.py)
+    return {k: v for k, v in meta.items() if v is None or isinstance(v, (str, int, float, bool))}
 
 
 @app.post("/ingest/upsert")
@@ -136,6 +136,42 @@ def ingest_upsert(chunks: list[Chunk], authorization: str | None = Header(defaul
         metadatas=[_scalar_meta(c.metadata) for c in chunks],
     )
     return {"upserted": len(chunks), "documents": get_db().count()}
+
+
+class LookupRequest(BaseModel):
+    sources: list[str]
+
+
+class MetadataUpdate(BaseModel):
+    id: str
+    metadata: dict
+
+
+@app.post("/ingest/lookup")
+def ingest_lookup(req: LookupRequest, authorization: str | None = Header(default=None)):
+    """Stored {id: metadata} of every chunk whose source is listed. r-doc-builder diffs a file
+    against it: unchanged chunks are skipped, metadata-only changes updated, dropped chunks deleted."""
+    _require_ingest_token(authorization)
+    return get_db().lookup(req.sources) if req.sources else {}
+
+
+@app.post("/ingest/update")
+def ingest_update(updates: list[MetadataUpdate], authorization: str | None = Header(default=None)):
+    """Metadata only: content and vectors stay, so a re-labelled chunk costs no embedding."""
+    _require_ingest_token(authorization)
+    if updates:
+        get_db().update_metadata([u.id for u in updates], [_scalar_meta(u.metadata) for u in updates])
+    return {"updated": len(updates)}
+
+
+@app.post("/ingest/delete")
+def ingest_delete(ids: list[str] = Body(...), authorization: str | None = Header(default=None)):
+    _require_ingest_token(authorization)
+    before = get_db().count()
+    if ids:
+        get_db().delete(ids)
+    documents = get_db().count()
+    return {"deleted": before - documents, "documents": documents}
 
 
 @app.post("/ingest/reset")

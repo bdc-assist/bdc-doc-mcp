@@ -55,4 +55,16 @@ out = subprocess.run([sys.executable, "-c", "from r_doc_mcp import config; print
                      env={**os.environ, "CONFIG_DIR": "examples/bdc/", "COLLECTION_NAME": ""})  # empty = unset, and beats .env
 assert out.stdout.strip() == "bdc", out.stdout + out.stderr
 
+# the fake corpus (r-doc-builder's examples/fixture) stays BDC-shaped: same doc_types and default scope,
+# its own collection, and a tool description with every placeholder filled
+import yaml
+fixture, bdc = (yaml.safe_load((ROOT / "examples" / name / "doc_types.yaml").read_text(encoding="utf-8"))
+                for name in ("fixture", "bdc"))
+assert {n: t["default"] for n, t in fixture["types"].items()} == {n: t["default"] for n, t in bdc["types"].items()}
+out = subprocess.run([sys.executable, "-c", "from r_doc_mcp import config; from r_doc_mcp.mcp_server import tool_description; "
+                      "d = tool_description(); print(config.COLLECTION_NAME, '{' not in d and 'fixture platform' in d)"],
+                     capture_output=True, text=True, cwd=ROOT,
+                     env={**os.environ, "CONFIG_DIR": "examples/fixture", "COLLECTION_NAME": ""})
+assert out.stdout.split() == ["fixture", "True"], out.stdout + out.stderr
+
 print("doc_types self-check passed")
