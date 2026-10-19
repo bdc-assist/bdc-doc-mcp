@@ -7,7 +7,7 @@ types:
     description: key pages of the BDC website — about/overview, joining BDC, analyzing & sharing data, usage costs and terms
     default: true
   faq:
-    description: Freshdesk help-desk FAQ articles (support questions & answers)
+    description: BDC website FAQ (biodatacatalyst.nhlbi.nih.gov/help/faqs) — common questions & answers on data access, security and using BDC
     default: true
   video:
     description: transcripts of BDC YouTube tutorials/webinars, with timestamped links into the video
