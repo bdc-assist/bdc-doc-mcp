@@ -99,6 +99,19 @@ def get_emb():
         from langchain_openai import OpenAIEmbeddings
         return OpenAIEmbeddings(base_url=url, model=model, api_key=_self_hosted_key(),
                                 check_embedding_ctx_length=False)
+    azure_key = os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if provider == "azure" and url and url.rstrip("/").endswith("/openai/v1"):
+        # Azure's OpenAI-compatible v1 gateway speaks plain OpenAI — the deployments
+        # client would stack its own path on top and 404
+        from langchain_openai import OpenAIEmbeddings
+        return OpenAIEmbeddings(base_url=url, model=model, api_key=azure_key, check_embedding_ctx_length=False)
+    if provider == "azure":
+        # EMBEDDING_MODEL is the *deployment* name, EMBEDDING_URL the resource root; model= too,
+        # so the client's .model names the deployment rather than its ada-002 default
+        from langchain_openai import AzureOpenAIEmbeddings
+        return AzureOpenAIEmbeddings(azure_endpoint=url, azure_deployment=model, model=model, api_key=azure_key,
+                                     api_version=os.getenv("AZURE_API_VERSION", "2024-10-21"),
+                                     check_embedding_ctx_length=False)
     if provider == "ollama":
         from langchain_ollama import OllamaEmbeddings
         return OllamaEmbeddings(base_url=url, model=model)

@@ -85,6 +85,33 @@ def test_search_k_default_from_config():
     assert inspect.signature(fn).parameters["k"].default == config.SEARCH_K
 
 
+def test_azure_embedding_clients():
+    """An azure.com EMBEDDING_URL used to raise Unsupported EMBEDDING_MODEL_PROVIDER: the v1 gateway
+    gets the plain OpenAI client, a resource root the deployments one, both named after the deployment."""
+    from r_doc_mcp import config
+
+    saved = {k: os.environ.get(k) for k in ("EMBEDDING_MODEL_PROVIDER", "EMBEDDING_URL", "EMBEDDING_MODEL",
+                                            "OPENAI_API_KEY")}
+    cases = [("https://res.services.ai.azure.com/openai/v1", "OpenAIEmbeddings", "openai_api_base"),
+             ("https://res.openai.azure.com", "AzureOpenAIEmbeddings", "azure_endpoint")]
+    try:
+        # empty, not unset: an unset provider could be refilled from .env
+        os.environ.update({"EMBEDDING_MODEL_PROVIDER": "", "EMBEDDING_MODEL": "emb-deploy", "OPENAI_API_KEY": "test"})
+        for url, cls, endpoint in cases:
+            os.environ["EMBEDDING_URL"] = url
+            config.get_emb.cache_clear()
+            emb = config.get_emb()
+            assert type(emb).__name__ == cls, (url, type(emb).__name__)
+            assert getattr(emb, endpoint).rstrip("/") == url and emb.model == "emb-deploy", url
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        config.get_emb.cache_clear()
+
+
 # made-up chunks: two in the default scope (page, docs), three dated ones outside it, at both
 # ends and the middle of January so inclusive bounds and doc_type + date combinations show
 FILTERED = [
@@ -318,6 +345,7 @@ def test_new_ingest_routes_accept_empty_bodies():
 
 
 if __name__ == "__main__":
+    test_azure_embedding_clients()
     test_search_k_default_from_config()
     test_mcp_server_name_from_config()
     test_ingest_requires_token()
