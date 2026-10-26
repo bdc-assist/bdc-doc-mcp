@@ -1,9 +1,11 @@
 """Ingest + search round-trip through the HTTP API against a throwaway chroma DB.
 No network: embeddings are pushed pre-computed (as r-doc-builder does), and embedding-mode
 searches use a fake embedder. test_mcp.py covers the real one against the pushed DB."""
+import asyncio
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,7 +51,7 @@ def test_ingest_and_search_roundtrip():
     assert res.status_code == 200, res.text
     assert res.json() == {"upserted": 3, "documents": 3}
 
-    assert client.get("/health").json() == {"status": "ok", "documents": 3}
+    assert client.get("/health").json() == {"status": "ok", "documents": 3, "last_ingest": {}}
 
     # keyword search honors the default scope: the event chunk is excluded
     hits = client.post("/search", json={"query": "PIC-SURE", "mode": "keyword"}).json()
@@ -166,7 +168,8 @@ def test_ingest_token_edge_cases():
     """Every ingest route answers every wrong Authorization with a 401 and writes nothing (a non-ASCII
     header used to crash compare_digest into a 500); an empty INGEST_TOKEN disables ingest."""
     routes = (("/ingest/upsert", CHUNKS), ("/ingest/reset", None), ("/ingest/lookup", {"sources": ["s"]}),
-              ("/ingest/update", [{"id": "1", "metadata": {}}]), ("/ingest/delete", ["1"]))
+              ("/ingest/update", [{"id": "1", "metadata": {}}]), ("/ingest/delete", ["1"]),
+              ("/ingest/done", {"doc_types": ["docs"]}))
     assert client.post("/ingest/reset", headers=AUTH).status_code == 200
     wrong = [{}, {"Authorization": "Bearer "}, {"Authorization": "Token test-token"},
              {"Authorization": "Bearer wrong"}, {"Authorization": "Bearer tést".encode("latin-1")}]
@@ -174,7 +177,8 @@ def test_ingest_token_edge_cases():
         for path, body in routes:
             res = client.post(path, json=body, headers=headers)
             assert res.status_code == 401, (path, headers, res.status_code)
-    assert client.get("/health").json()["documents"] == 0, "a refused upsert writes nothing"
+    health = client.get("/health").json()
+    assert health["documents"] == 0 and health["last_ingest"] == {}, "a refused call writes nothing"
 
     os.environ["INGEST_TOKEN"] = ""
     try:
@@ -241,18 +245,44 @@ def test_mcp_search_docs_maps_its_arguments():
     assert client.post("/ingest/upsert", json=FILTERED, headers=AUTH).status_code == 200
     try:
         def contents(**kw):
-            return [h["content"] for h in fn("event", mode="keyword", doc_type="event", **kw)]
+            return [h["content"] for h in asyncio.run(fn("event", mode="keyword", doc_type="event", **kw))]
 
         assert contents(date_from="2025-01-02") == ["event two"]
         assert contents(date_to="2025-01-02") == ["event one"]
         assert len(contents(k=1)) == 1
         for bad in ({"date_from": "January"}, {"mode": "semantic"}):
             try:
-                fn("q", **bad)
+                asyncio.run(fn("q", **bad))
                 raise AssertionError(f"{bad} must be rejected")
             except ValidationError:
                 pass
     finally:
+        client.post("/ingest/reset", headers=AUTH)
+
+
+def test_mcp_searches_of_several_users_run_at_once():
+    """FastMCP runs a sync tool on the event loop: search_docs was, so concurrent users' searches
+    queued behind each other. Four slow searches together must take about as long as one."""
+    from r_doc_mcp import api
+    from r_doc_mcp.mcp_server import mcp
+
+    class SlowEmb:
+        def embed_query(self, text):
+            time.sleep(0.5)  # a busy embedding server
+            return [1.0, 0.0]
+
+    async def four_users():
+        return await asyncio.gather(*(mcp.call_tool("search_docs", {"query": f"q{n}"}) for n in range(4)))
+
+    original, api.get_emb = api.get_emb, lambda: SlowEmb()
+    try:
+        assert client.post("/ingest/upsert", json=FILTERED, headers=AUTH).status_code == 200
+        start = time.monotonic()
+        results = asyncio.run(four_users())
+        elapsed = time.monotonic() - start
+        assert len(results) == 4 and elapsed < 1.5, f"4 searches took {elapsed:.1f}s: they ran one after another"
+    finally:
+        api.get_emb = original
         client.post("/ingest/reset", headers=AUTH)
 
 
@@ -342,6 +372,46 @@ def test_new_ingest_routes_accept_empty_bodies():
     assert _lookup() == {}
     assert client.post("/ingest/update", json=[], headers=AUTH).json() == {"updated": 0}
     assert client.post("/ingest/delete", json=[], headers=AUTH).json() == {"deleted": 0, "documents": 0}
+    assert client.post("/ingest/done", json={"doc_types": []}, headers=AUTH).json() == {"last_ingest": {}}
+
+
+def test_done_stamps_each_doc_types_last_ingest():
+    """/health reports when r-doc-builder last finished pushing each doc_type (bdc-assist#37): a later
+    push stamps only its own types, the stamps outlive a restart, and a reset clears them with the data."""
+    import datetime
+
+    from r_doc_mcp.db import ChromaDB
+
+    try:
+        client.post("/ingest/reset", headers=AUTH)
+        res = client.post("/ingest/done", json={"doc_types": ["docs", "page"]}, headers=AUTH)
+        assert res.status_code == 200, res.text
+        first = res.json()["last_ingest"]
+        assert set(first) == {"docs", "page"}, first
+        assert datetime.datetime.fromisoformat(first["docs"]).utcoffset() == datetime.timedelta(0), "UTC"
+        client.post("/ingest/done", json={"doc_types": ["faq"]}, headers=AUTH)
+        stamps = client.get("/health").json()["last_ingest"]
+        assert set(stamps) == {"docs", "page", "faq"} and stamps["page"] == first["page"], stamps
+        assert ChromaDB().last_ingest() == stamps, "stored with the collection, not in this process"
+        client.post("/ingest/reset", headers=AUTH)
+        assert client.get("/health").json()["last_ingest"] == {}
+    finally:
+        client.post("/ingest/reset", headers=AUTH)
+
+
+def test_http_app_serves_api_and_mcp_in_one_process():
+    # run last: http_app() mounts /mcp onto the shared app
+    from r_doc_mcp.mcp_server import http_app
+
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "test", "version": "0"}}}
+    # MCP_HOST is 127.0.0.1 here, so FastMCP only accepts a localhost Host header
+    with TestClient(http_app(), base_url="http://127.0.0.1:8001") as c:
+        assert c.get("/health").status_code == 200, "api routes still match before the /mcp mount"
+        res = c.post("/mcp", json=init, headers={"Accept": "application/json, text/event-stream"})
+        # without the lifespan wiring /mcp fails: the session manager's task group never started
+        assert res.status_code == 200 and '"serverInfo"' in res.text, res.text
 
 
 if __name__ == "__main__":
@@ -357,7 +427,10 @@ if __name__ == "__main__":
     test_none_metadata_value_removes_the_key()
     test_metadata_types_survive_a_lookup()
     test_new_ingest_routes_accept_empty_bodies()
+    test_done_stamps_each_doc_types_last_ingest()
     test_unexpected_errors_are_json()
     test_fake_embedding_provider_searches_offline()
     test_mcp_search_docs_maps_its_arguments()
+    test_mcp_searches_of_several_users_run_at_once()
+    test_http_app_serves_api_and_mcp_in_one_process()
     print("api ingest/search self-check passed")

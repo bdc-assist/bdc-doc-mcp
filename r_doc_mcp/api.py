@@ -80,7 +80,7 @@ def _keyword_rank(query: str, docs: list, metas: list, k: int) -> list:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "documents": get_db().count()}
+    return {"status": "ok", "documents": get_db().count(), "last_ingest": get_db().last_ingest()}
 
 
 @app.post("/search")
@@ -172,6 +172,20 @@ def ingest_delete(ids: list[str] = Body(...), authorization: str | None = Header
         get_db().delete(ids)
     documents = get_db().count()
     return {"deleted": before - documents, "documents": documents}
+
+
+class DoneRequest(BaseModel):
+    doc_types: list[str]
+
+
+@app.post("/ingest/done")
+def ingest_done(req: DoneRequest, authorization: str | None = Header(default=None)):
+    """r-doc-builder finished pushing these doc_types (every upsert, update and delete stored), changed
+    or not: stamp them with this server's UTC time, which /health reports as their last successful ingest."""
+    _require_ingest_token(authorization)
+    if req.doc_types:
+        get_db().mark_ingested(req.doc_types, datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"))
+    return {"last_ingest": get_db().last_ingest()}
 
 
 @app.post("/ingest/reset")

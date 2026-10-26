@@ -4,8 +4,9 @@ A backend implements: count() -> int; search(embedding, k, types, date_from, dat
 -> [{content, metadata, score}] (score = distance, lower is better); scan(types,
 date_from, date_to) -> (documents, metadatas); upsert(ids, contents, embeddings,
 metadatas); lookup(sources) -> {id: metadata} of the chunks whose metadata source is
-listed; update_metadata(ids, metadatas); delete(ids); reset(). upsert and
-update_metadata merge metadata into what is stored, and a None value deletes that key.
+listed; update_metadata(ids, metadatas); delete(ids); reset(); mark_ingested(doc_types,
+when) and last_ingest() -> {doc_type: when}, kept with the collection so reset() clears them.
+upsert and update_metadata merge metadata into what is stored, and a None value deletes that key.
 types is a list of doc_type values (None/[] = no type filter);
 date_from/date_to are inclusive YYYYMMDD ints matched against metadata date_num.
 Add a backend (postgres/pgvector, qdrant, ...) by writing such a class and
@@ -70,6 +71,14 @@ class ChromaDB:
 
     def delete(self, ids):
         self.coll.delete(ids=ids)
+
+    # collection metadata, one "ingested:<doc_type>" key each; modify() replaces the whole dict, hence the merge
+    def mark_ingested(self, doc_types, when):
+        self.coll.modify(metadata={**(self.coll.metadata or {}), **{f"ingested:{t}": when for t in doc_types}})
+
+    def last_ingest(self):
+        return {k.removeprefix("ingested:"): v for k, v in (self.coll.metadata or {}).items()
+                if k.startswith("ingested:")}
 
     def reset(self):
         if COLLECTION_NAME in [c.name for c in self._client.list_collections()]:
