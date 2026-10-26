@@ -36,13 +36,14 @@ uv run uvicorn r_doc_mcp.api:app --port 8000     # docs at /docs (or: python -m 
 
 | Endpoint | Body | Returns |
 |---|---|---|
-| `GET /health` | — | `{status, documents}` |
+| `GET /health` | — | `{status, documents, last_ingest}` — `last_ingest`: `{doc_type: UTC time}` of each one's last finished push |
 | `POST /search` | `{query, k, mode?, doc_type?, date_from?, date_to?}` | ranked chunks + metadata + score |
 | `POST /ingest/upsert` | `[{id, content, embedding, metadata}]` | `{upserted, documents}` |
 | `POST /ingest/lookup` | `{sources: [str]}` | `{id: metadata}` of the stored chunks with those sources |
 | `POST /ingest/update` | `[{id, metadata}]` | `{updated}` — metadata only, content and vectors stay |
 | `POST /ingest/delete` | `[id]` | `{deleted, documents}` |
-| `POST /ingest/reset` | — | `{status}` |
+| `POST /ingest/done` | `{doc_types: [str]}` | `{last_ingest}` — stamps those doc_types as just pushed, changed or not |
+| `POST /ingest/reset` | — | `{status}` (clears `last_ingest` too) |
 
 `mode` is `embedding` (default; semantic similarity, score = distance, lower is better)
 or `keyword` (fuzzy literal word matching — ignores case/punctuation and tolerates
@@ -91,7 +92,7 @@ Edit it freely (literal braces as `{{ }}`); the server reads it once at startup.
 
 ```bash
 uv run python -m r_doc_mcp.mcp_server           # stdio
-uv run python -m r_doc_mcp.mcp_server --http    # streamable HTTP on MCP_HOST:MCP_PORT (default 127.0.0.1:8001)
+uv run python -m r_doc_mcp.mcp_server --http    # streamable HTTP on MCP_HOST:MCP_PORT (default 127.0.0.1:8001), plus the API
 ```
 
 Exposes one tool, `search_docs` — same search as the API but queries the DB directly,
@@ -109,7 +110,11 @@ Stdio clients (Claude Desktop/Code, Cursor) launch the server themselves — reg
 The `mcpServers` key above is the client's own label for the server; the name the server
 reports for itself is `MCP_SERVER_NAME` (default `r-doc-mcp`).
 
-Network clients: run `--http` and point them at `http://host:8001/mcp` instead.
+Network clients: run `--http` and point them at `http://host:8001/mcp` instead. `--http` also
+serves the API routes (`/health /search /ingest/*`) from the same process, so a deployment runs one
+server and r-doc-builder pushes to `DOC_MCP_URL=http://host:8001`: chroma isn't process-safe, so a
+separate API process ingesting into the same `DB_PATH` would write under the MCP server's index.
+Only `/ingest/*` is token-guarded; keep `/mcp` and `/search` on a trusted network.
 
 Smoke test: `uv run python tests/test_mcp.py`
 

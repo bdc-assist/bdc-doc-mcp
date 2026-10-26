@@ -2,6 +2,7 @@
 /.*
 !/.gitignore
 !/.env.example
+!/.env.server.example
 
 AGENTS.md
 CLAUDE.md
