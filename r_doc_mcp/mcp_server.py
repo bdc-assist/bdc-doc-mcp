@@ -6,8 +6,12 @@ from .api import SearchRequest, app, default_types, search
 from .config import MCP_HOST, MCP_PORT, MCP_SERVER_NAME, SEARCH_K, doc_types, prompts
 
 # host goes to the constructor, not settings: FastMCP derives its allowed Host headers from it
-# there (localhost-only for 127.0.0.1), so setting it later would bind but reject other hosts
-mcp = FastMCP(MCP_SERVER_NAME, host=MCP_HOST, port=MCP_PORT)
+# there (localhost-only for 127.0.0.1), so setting it later would bind but reject other hosts.
+# stateless: no session state here, so a client can keep one session open across restarts (r-assist's
+# keep_session) and every request stands alone. WARNING: at INFO, FastMCP's rich-rendered lines per
+# request were 35% of this process's CPU under load (bdc-assist profiles/, 2026-10-28).
+mcp = FastMCP(MCP_SERVER_NAME, host=MCP_HOST, port=MCP_PORT, stateless_http=True, json_response=True,
+              log_level="WARNING")
 
 
 def tool_description():

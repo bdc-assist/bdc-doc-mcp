@@ -412,6 +412,11 @@ def test_http_app_serves_api_and_mcp_in_one_process():
         res = c.post("/mcp", json=init, headers={"Accept": "application/json, text/event-stream"})
         # without the lifespan wiring /mcp fails: the session manager's task group never started
         assert res.status_code == 200 and '"serverInfo"' in res.text, res.text
+        # stateless: a request needs no session ID nor handshake (a stateful server: 400 "Missing session
+        # ID"), so a client's kept session survives a restart; json_response: plain JSON, no SSE framing
+        res = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                     headers={"Accept": "application/json, text/event-stream"})
+        assert res.status_code == 200 and res.json()["result"]["tools"][0]["name"] == "search_docs", res.text
 
 
 if __name__ == "__main__":

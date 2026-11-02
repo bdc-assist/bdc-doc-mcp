@@ -115,6 +115,9 @@ serves the API routes (`/health /search /ingest/*`) from the same process, so a 
 server and r-doc-builder pushes to `DOC_MCP_URL=http://host:8001`: chroma isn't process-safe, so a
 separate API process ingesting into the same `DB_PATH` would write under the MCP server's index.
 Only `/ingest/*` is token-guarded; keep `/mcp` and `/search` on a trusted network.
+`/mcp` is stateless (no session state, plain JSON replies): every request stands alone, so a
+client can keep one session open across server restarts (r-assist's `keep_session: true`).
+FastMCP logs at WARNING only: its per-request INFO lines cost 35% of the CPU under load.
 
 Smoke test: `uv run python tests/test_mcp.py`
 
