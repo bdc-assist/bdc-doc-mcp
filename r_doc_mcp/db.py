@@ -62,9 +62,13 @@ class ChromaDB:
     def upsert(self, ids, contents, embeddings, metadatas):
         self.coll.upsert(ids=ids, documents=contents, embeddings=embeddings, metadatas=metadatas)
 
-    def lookup(self, sources):
-        data = self.coll.get(where={"source": {"$in": list(sources)}}, include=["metadatas"])
-        return {cid: meta or {} for cid, meta in zip(data["ids"], data["metadatas"])}
+    def lookup(self, sources=(), doc_types=()):
+        out = {}
+        for key, values in (("source", sources), ("doc_type", doc_types)):
+            if values:
+                data = self.coll.get(where={key: {"$in": list(values)}}, include=["metadatas"])
+                out.update({cid: meta or {} for cid, meta in zip(data["ids"], data["metadatas"])})
+        return out
 
     def update_metadata(self, ids, metadatas):
         self.coll.update(ids=ids, metadatas=metadatas)

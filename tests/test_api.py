@@ -336,6 +336,25 @@ def test_lookup_update_delete_roundtrip():
         client.post("/ingest/reset", headers=AUTH)
 
 
+def test_lookup_by_doc_type():
+    """r-doc-builder --prune asks by doc_type for every stored document of the types it pushed; sources
+    and doc_types together return the union, and neither returns nothing."""
+    rows = [
+        {"id": "d1", "content": "d", "embedding": [1.0, 0.0], "metadata": {"source": "d", "doc_type": "docs"}},
+        {"id": "f1", "content": "f", "embedding": [0.0, 1.0], "metadata": {"source": "f", "doc_type": "faq"}},
+        {"id": "u1", "content": "u", "embedding": [0.5, 0.5], "metadata": {"source": "u"}},
+    ]
+    try:
+        client.post("/ingest/reset", headers=AUTH)
+        client.post("/ingest/upsert", json=rows, headers=AUTH)
+        post = lambda body: client.post("/ingest/lookup", json=body, headers=AUTH).json()
+        assert set(post({"doc_types": ["docs"]})) == {"d1"}
+        assert set(post({"sources": ["u"], "doc_types": ["faq", "nope"]})) == {"u1", "f1"}
+        assert post({}) == {}
+    finally:
+        client.post("/ingest/reset", headers=AUTH)
+
+
 def test_none_metadata_value_removes_the_key():
     """Chroma merges metadata on upsert and update, so a key a record dropped would live on forever;
     r-doc-builder sends it as None, which must reach Chroma and delete it."""
@@ -429,6 +448,7 @@ if __name__ == "__main__":
     test_embedding_search_filters_and_metadata()
     test_ingest_token_edge_cases()
     test_lookup_update_delete_roundtrip()
+    test_lookup_by_doc_type()
     test_none_metadata_value_removes_the_key()
     test_metadata_types_survive_a_lookup()
     test_new_ingest_routes_accept_empty_bodies()

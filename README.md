@@ -39,7 +39,7 @@ uv run uvicorn r_doc_mcp.api:app --port 8000     # docs at /docs (or: python -m 
 | `GET /health` | — | `{status, documents, last_ingest}` — `last_ingest`: `{doc_type: UTC time}` of each one's last finished push |
 | `POST /search` | `{query, k, mode?, doc_type?, date_from?, date_to?}` | ranked chunks + metadata + score |
 | `POST /ingest/upsert` | `[{id, content, embedding, metadata}]` | `{upserted, documents}` |
-| `POST /ingest/lookup` | `{sources: [str]}` | `{id: metadata}` of the stored chunks with those sources |
+| `POST /ingest/lookup` | `{sources: [str], doc_types: [str]}` (either may be omitted) | `{id: metadata}` of the stored chunks with one of those sources or doc_types |
 | `POST /ingest/update` | `[{id, metadata}]` | `{updated}` — metadata only, content and vectors stay |
 | `POST /ingest/delete` | `[id]` | `{deleted, documents}` |
 | `POST /ingest/done` | `{doc_types: [str]}` | `{last_ingest}` — stamps those doc_types as just pushed, changed or not |
