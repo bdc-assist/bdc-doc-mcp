@@ -139,7 +139,8 @@ def ingest_upsert(chunks: list[Chunk], authorization: str | None = Header(defaul
 
 
 class LookupRequest(BaseModel):
-    sources: list[str]
+    sources: list[str] = []
+    doc_types: list[str] = []
 
 
 class MetadataUpdate(BaseModel):
@@ -149,10 +150,11 @@ class MetadataUpdate(BaseModel):
 
 @app.post("/ingest/lookup")
 def ingest_lookup(req: LookupRequest, authorization: str | None = Header(default=None)):
-    """Stored {id: metadata} of every chunk whose source is listed. r-doc-builder diffs a file
-    against it: unchanged chunks are skipped, metadata-only changes updated, dropped chunks deleted."""
+    """Stored {id: metadata} of every chunk whose source or doc_type is listed. r-doc-builder diffs a
+    file against it by source (unchanged chunks skipped, metadata-only changes updated, dropped chunks
+    deleted), and --prune asks by doc_type for documents no longer in any source."""
     _require_ingest_token(authorization)
-    return get_db().lookup(req.sources) if req.sources else {}
+    return get_db().lookup(req.sources, req.doc_types)
 
 
 @app.post("/ingest/update")
