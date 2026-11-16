@@ -40,7 +40,7 @@ That is the main way to run it. To run the API alone, when the MCP server isn't 
 uv run uvicorn r_doc_mcp.api:app --port 8000     # docs at /docs (or: python -m r_doc_mcp.api, binds API_HOST:API_PORT)
 ```
 
-Never run both on the same `DB_PATH`: chroma isn't process-safe, so use one process per database.
+Never run both at once on the same `DB_PATH`: chroma isn't process-safe, so use one process per database.
 
 | Endpoint | Body | Returns |
 |---|---|---|
