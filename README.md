@@ -104,7 +104,7 @@ uv run python -m r_doc_mcp.mcp_server --http    # streamable HTTP on MCP_HOST:MC
 ```
 
 Exposes one tool, `search_docs` — same search as the API but queries the DB directly,
-so the API service doesn't need to run. Needs a pushed DB + embeddings.
+so no separate API process is needed. Needs a pushed DB + embeddings.
 
 Stdio clients (Claude Desktop/Code, Cursor) launch the server themselves — register it:
 
