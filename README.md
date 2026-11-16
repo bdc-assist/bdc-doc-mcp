@@ -31,8 +31,16 @@ To run the three repos together from scratch, follow "From clone to chat" in r-a
 ## API
 
 ```bash
+uv run python -m r_doc_mcp.mcp_server --http    # one process on MCP_PORT (8001): /mcp plus /health, /search, /ingest/*
+```
+
+That is the main way to run it. To run the API alone, when the MCP server isn't running:
+
+```bash
 uv run uvicorn r_doc_mcp.api:app --port 8000     # docs at /docs (or: python -m r_doc_mcp.api, binds API_HOST:API_PORT)
 ```
+
+Never run both on the same `DB_PATH`: chroma isn't process-safe, so use one process per database.
 
 | Endpoint | Body | Returns |
 |---|---|---|
